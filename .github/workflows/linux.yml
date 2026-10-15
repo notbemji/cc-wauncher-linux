@@ -1,0 +1,52 @@
+name: Linux wrapper
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wrapper:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        toolchain: [mingw, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build and lint tools
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 clang lld llvm shellcheck
+      - name: Check scripts and regression tests
+        run: |
+          bash -n linux/wauncher-linux linux/scripts/*.sh
+          shellcheck linux/wauncher-linux linux/scripts/*.sh
+          python3 -m unittest discover -s linux/tests -v
+      - name: Build Windows bootstrap from source
+        env:
+          WAUNCHER_BOOTSTRAP_TOOLCHAIN: ${{ matrix.toolchain }}
+        run: |
+          bash linux/scripts/build-bootstrap.sh "$PWD/linux/build/steam.exe"
+          file linux/build/steam.exe
+      - name: Package Linux integration
+        run: tar --exclude='__pycache__' -czf "cc-wauncher-linux-${{ matrix.toolchain }}.tar.gz" README.md LICENSE linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-wrapper-${{ matrix.toolchain }}
+          path: cc-wauncher-linux-${{ matrix.toolchain }}.tar.gz
+
+  wauncher:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Publish Wauncher with its Windows runtime
+        run: dotnet publish Wauncher/Wauncher.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o dist/wauncher
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wauncher-windows-self-contained-for-proton
+          path: dist/wauncher/

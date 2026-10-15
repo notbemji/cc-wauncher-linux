@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+require() { command -v "$1" >/dev/null 2>&1 || { printf 'Missing dependency: %s\n' "$1" >&2; exit 1; }; }
+fail() { printf 'Wauncher Linux: %s\n' "$*" >&2; exit 1; }
+require python3
+
+case "${1:-}" in
+    setup|doctor|--help|-h)
+        exec python3 "$SCRIPT_DIR/manager.py" "$@"
+        ;;
+esac
+
+config=${WAUNCHER_LINUX_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/cc-wauncher-linux/config.json}
+dry_run=0
+debug=${WAUNCHER_PROTON_LOG:-0}
+while (( $# )); do
+    case "$1" in
+        --config)
+            (( $# >= 2 )) || fail '--config requires a path'
+            config=$2; shift 2 ;;
+        --dry-run) dry_run=1; shift ;;
+        --debug) debug=1; shift ;;
+        --) shift; break ;;
+        *) fail 'Expected -- followed by Steam %command%; run wauncher-linux --help' ;;
+    esac
+done
+(( $# )) || fail 'Launch from AppID 730 in Steam; run wauncher-linux --help for setup'
+
+# Read data, never execute the contents of a user configuration as shell code.
+# A temporary file preserves Python failures (process substitutions hide them).
+require mktemp
+config_values=$(mktemp)
+trap 'rm -f -- "$config_values"' EXIT
+python3 "$SCRIPT_DIR/manager.py" resolve --config "$config" > "$config_values"
+mapfile -d '' -t values < "$config_values"
+rm -f -- "$config_values"
+trap - EXIT
+(( ${#values[@]} == 6 )) || fail 'Incomplete configuration from manager.py'
+game_dir=${values[0]}
+prefix=${values[1]}
+steam_root=${values[2]}
+bootstrap=${values[3]}
+log_dir=${values[4]}
+gc_mode=${values[5]}
+
+# Environment variables alone cannot create a native Steam compatibility session.
+# Refuse the old non-Steam shortcut path instead of pretending it is AppID 730.
+session_id=${SteamAppId:-${STEAM_COMPAT_APP_ID:-}}
+[[ "$session_id" == 730 ]] || fail 'No AppID 730 session. Use the official Counter-Strike 2 Play button with the printed launch option.'
+[[ "${STEAM_COMPAT_APP_ID:-730}" == 730 ]] || fail 'STEAM_COMPAT_APP_ID is not 730; use the official Steam entry'
+
+steam_command=("$@")
+proton_index=-1
+for ((i = 0; i < ${#steam_command[@]}; i++)); do
+    if [[ "${steam_command[i]}" == */proton ]]; then
+        proton_index=$i
+        break
+    fi
+done
+(( proton_index >= 0 )) || fail 'No Proton command found. Force Proton Experimental in Counter-Strike 2 → Properties → Compatibility.'
+(( proton_index + 2 < ${#steam_command[@]} )) || fail 'Incomplete Proton command'
+[[ -x "${steam_command[proton_index]}" ]] || fail 'Steam supplied an unavailable Proton executable'
+case "${steam_command[proton_index + 1]}" in
+    run|waitforexitandrun) ;;
+    *) fail "Unsupported Proton verb: ${steam_command[proton_index + 1]}" ;;
+esac
+target_index=$((proton_index + 2))
+if [[ "${steam_command[target_index]}" == -- ]]; then
+    target_index=$((target_index + 1))
+fi
+(( target_index < ${#steam_command[@]} )) || fail 'Missing Windows target in Steam command'
+for arg in "${steam_command[@]}"; do
+    if [[ "$arg" == AppId=* && "$arg" != AppId=730 ]]; then
+        fail 'Steam reaper belongs to a different AppID; use the official Counter-Strike 2 entry'
+    fi
+done
+
+# Preserve Steam's reaper, runtime, overlay and Proton selection, but discard the
+# CS2 target and its arguments. Never eval or reparse the received command.
+command_prefix=("${steam_command[@]:0:proton_index+2}")
+command_prefix[proton_index + 1]=run
+for ((i = 0; i < proton_index; i++)); do
+    if [[ "${command_prefix[i]}" == --verb=waitforexitandrun ]]; then
+        command_prefix[i]=--verb=run
+    fi
+done
+launch_command=("${command_prefix[@]}" "$bootstrap")
+boot_command=("${command_prefix[@]}" wineboot.exe -u)
+
+export SteamAppId=730 SteamGameId=730 SteamOverlayGameId=730 STEAM_COMPAT_APP_ID=730
+export STEAM_COMPAT_DATA_PATH="$prefix"
+export STEAM_COMPAT_CLIENT_INSTALL_PATH="$steam_root"
+export STEAM_COMPAT_INSTALL_PATH="$game_dir"
+# Wine checks wildcard overrides before generic basenames for explicit paths.
+# This loads our external steam.exe natively while Proton's system32/steam.exe
+# still uses its exact builtin override. Preserve all other user overrides.
+export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+$WINEDLLOVERRIDES;}*steam.exe=n"
+# Steam might otherwise expose only CS2's original library to pressure-vessel.
+bootstrap_dir=$(dirname -- "$bootstrap")
+export STEAM_COMPAT_MOUNTS="${STEAM_COMPAT_MOUNTS:+$STEAM_COMPAT_MOUNTS:}$game_dir:$prefix:$bootstrap_dir:$log_dir:$SCRIPT_DIR:$steam_root"
+export PROTON_LOG="$debug" PROTON_LOG_DIR="$log_dir"
+
+if (( dry_run )); then
+    printf 'AppID: 730\nSteam: %s\nGame: %s\nPrefix: %s\nGC mode: %s\nCommand:' "$steam_root" "$game_dir" "$prefix" "$gc_mode"
+    printf ' %q' "${launch_command[@]}"
+    printf '\n'
+    exit 0
+fi
+
+require flock
+[[ $(uname -m) == x86_64 ]] || fail 'This wrapper currently supports x86_64 Linux hosts'
+[[ "$debug" == 0 || "$debug" == 1 ]] || fail 'WAUNCHER_PROTON_LOG must be 0 or 1'
+mkdir -p -- "$log_dir" "$(dirname -- "$prefix")"
+# Lock the prefix, not the repo: two configs using the same prefix must conflict.
+exec 9>"$prefix.wauncher-linux.lock"
+flock -n 9 || fail 'This Proton prefix is already in use by another Wauncher Linux launch'
+mkdir -p -- "$prefix"
+runtime_log="$log_dir/runtime.log"
+if [[ -f "$runtime_log" ]] && (( $(stat -c %s -- "$runtime_log") > 10485760 )); then
+    mv -f -- "$runtime_log" "$runtime_log.previous"
+fi
+{
+    printf '\n=== %s ===\n' "$(date -Is)"
+    printf 'AppID=730 game=%q prefix=%q GC=%s\n' "$game_dir" "$prefix" "$gc_mode"
+    printf 'Command:'; printf ' %q' "${launch_command[@]}"; printf '\n'
+} >> "$runtime_log"
+cd -- "$game_dir"
+
+# Bootstrap through Steam's selected Proton so registry, DLLs and user folders
+# are initialized before writing the GC preference. Existing prefixes are reused.
+if [[ ! -f "$prefix/pfx/system.reg" || ! -d "$prefix/pfx/drive_c/windows" ]]; then
+    PROTON_LOG=0 "${boot_command[@]}" >> "$runtime_log" 2>&1 || fail "Prefix initialization failed; see $runtime_log"
+fi
+python3 "$SCRIPT_DIR/manager.py" prepare --config "$config" >> "$runtime_log" 2>&1 || fail "Prefix configuration failed; see $runtime_log"
+printf 'Starting Wauncher; diagnostics: %s\n' "$runtime_log"
+# Our steam.exe stays alive until Wauncher exits. Proton/reaper tracks all
+# descendants. No second Wine server is used.
+exec "${launch_command[@]}" >> "$runtime_log" 2>&1

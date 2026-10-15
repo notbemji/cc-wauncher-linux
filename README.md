@@ -1,60 +1,21 @@
-<p align="center">
- <h2 align="center">ClassicCounter Wauncher</h2>
- <p align="center">
-   Wauncher for ClassicCounter with Discord RPC, a Server List, Friends List, Auto-Updates and More!
-   <br/>
-   Written in C# using .NET 8 and Avalonia.
- </p>
-</p>
+# ClassicCounter Wauncher Linux
 
-[![Downloads][downloads-shield]][downloads-url]
-[![Stars][stars-shield]][stars-url]
-[![Issues][issues-shield]][issues-url]
-[![MIT License][license-shield]][license-url]
+An unofficial Linux integration for [ClassicCounter Wauncher](https://github.com/ClassicCounter/launcher). Launch Wauncher and ClassicCounter's game coordinator through Steam/Proton with a real AppID 730 session.
 
-> [!IMPORTANT]
-> .NET Desktop Runtime 8 is required to run the Wauncher. Download it from [**here**](https://dotnet.microsoft.com/en-us/download/dotnet/thank-you/runtime-desktop-8.0.24-windows-x64-installer).
+```bash
+git clone https://github.com/notbemji/cc-wauncher-linux.git
+cd cc-wauncher-linux
+./linux/wauncher-linux setup --game-dir "/path/to/ClassicCounter"
+```
 
-> [!IMPORTANT]
-> Wauncher is still a work in progress. Some features are unfinished and you may run into bugs or changes between builds.
+Setup prints the launch-options line to paste into **Counter-Strike 2 → Properties → General**, after forcing **Proton Experimental** in Compatibility. Then use Counter-Strike 2's **Play** button to open Wauncher. GC mode is enabled automatically.
 
-## Settings
-- `Minimize to System Tray` keeps the launcher running in the background when in-game.
-- `Skip Updates` lets you launch the game even when Wauncher detects available updates.
-- `Add ClassicCounter to Steam` adds Wauncher to Steam as a non-Steam game and applies Steam artwork automatically.
-- `Disable Carousel` turns off the rotating hero images to lower memory usage.
-- `Disable Hardware Acceleration` switches Wauncher to software rendering and restarts the launcher automatically.
-- `Discord RPC` controls whether Wauncher updates your Discord presence. In some cases, Discord may still show "Counter-Strike: Global Offensive" even when RPC is disabled.
-- `Launch Options` lets you pass extra game launch flags such as `-high` or `+fps_max 300`.
-- `Verify Game Files` checks your installation and repairs any missing or damaged game files automatically.
+Requires x86_64 Linux, native Steam, Bash 4.4+, Python 3.8+, util-linux/coreutils, a working graphics runtime, and your existing ClassicCounter game files. Source checkouts also need MinGW-w64 GCC or Clang/LLD/LLVM to build the small Windows bootstrap. Use a self-contained Windows Wauncher build or install its Windows .NET runtime into the chosen Proton prefix.
 
-## Build / Publish
-- Build: `dotnet build Wauncher/Wauncher.csproj -c Release`
-- Publish: `dotnet publish Wauncher/Wauncher.csproj -c Release -r win-x64 --self-contained false`
-- Quick publish script: `publish.bat` (builds + hashes + optional copy target)
+Read the [Linux wrapper guide](linux/README.md) for installation, reusable prefixes, build scripts, diagnostics, Flatpak limitations and the confirmed-distro table. CachyOS is the first recorded working gameplay environment; other distributions need actual server testing before confirmation.
 
-## Packages Used
-- [AsyncImageLoader.Avalonia](https://github.com/AvaloniaUtils/AsyncImageLoader.Avalonia) by [AvaloniaUtils](https://github.com/AvaloniaUtils)
-- [Avalonia](https://github.com/AvaloniaUI/Avalonia) by [AvaloniaUI](https://github.com/AvaloniaUI)
-- [Avalonia.Desktop](https://github.com/AvaloniaUI/Avalonia) by [AvaloniaUI](https://github.com/AvaloniaUI)
-- [Avalonia.Themes.Fluent](https://github.com/AvaloniaUI/Avalonia) by [AvaloniaUI](https://github.com/AvaloniaUI)
-- [Avalonia.Fonts.Inter](https://github.com/AvaloniaUI/Avalonia) by [AvaloniaUI](https://github.com/AvaloniaUI)
-- [Avalonia.Diagnostics](https://github.com/AvaloniaUI/Avalonia) by [AvaloniaUI](https://github.com/AvaloniaUI)
-- [CommunityToolkit.Mvvm](https://github.com/CommunityToolkit/dotnet) by [CommunityToolkit](https://github.com/CommunityToolkit)
-- [CSGSI](https://github.com/rakijah/CSGSI) by [rakijah](https://github.com/rakijah)
-- [DiscordRichPresence](https://github.com/Lachee/discord-rpc-csharp) by [Lachee](https://github.com/Lachee)
-- [Downloader](https://github.com/bezzad/Downloader) by [bezzad](https://github.com/bezzad)
-- [Gameloop.Vdf](https://github.com/shravan2x/Gameloop.Vdf) by [shravan2x](https://github.com/shravan2x)
-- [Refit](https://github.com/reactiveui/refit) by [ReactiveUI](https://github.com/reactiveui)
-- [Refit.Newtonsoft.Json](https://github.com/reactiveui/refit) by [ReactiveUI](https://github.com/reactiveui)
-- [Spectre.Console](https://github.com/spectreconsole/spectre.console) by [Spectre Console](https://github.com/spectreconsole)
-- [Svg.Controls.Skia.Avalonia](https://github.com/wieslawsoltes/Svg.Skia) by [wieslawsoltes](https://github.com/wieslawsoltes)
+This is the main fork, with upstream source/history retained and integration isolated in `linux/`. No submodules are needed. The upstream Windows documentation is preserved in [linux/UPSTREAM_README.md](linux/UPSTREAM_README.md).
 
-[downloads-shield]: https://img.shields.io/github/downloads/classiccounter/launcher/total.svg?style=for-the-badge
-[downloads-url]: https://github.com/classiccounter/launcher/releases/latest
-[stars-shield]: https://img.shields.io/github/stars/classiccounter/launcher.svg?style=for-the-badge
-[stars-url]: https://github.com/classiccounter/launcher/stargazers
-[issues-shield]: https://img.shields.io/github/issues/classiccounter/launcher.svg?style=for-the-badge
-[issues-url]: https://github.com/classiccounter/launcher/issues
-[license-shield]: https://img.shields.io/github/license/classiccounter/launcher.svg?style=for-the-badge
-[license-url]: https://github.com/classiccounter/launcher/blob/main/LICENSE.txt
+The wrapper changes the CS2 launch target while its Steam launch option is installed. Clear that option and restore Compatibility settings to return to regular CS2. This project does not redistribute Steam or ClassicCounter game assets.
+
+Licensed under the [MIT license](LICENSE).
