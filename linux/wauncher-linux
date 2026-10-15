@@ -135,6 +135,8 @@ if [[ ! -f "$prefix/pfx/system.reg" || ! -d "$prefix/pfx/drive_c/windows" ]]; th
     PROTON_LOG=0 "${boot_command[@]}" >> "$runtime_log" 2>&1 || fail "Prefix initialization failed; see $runtime_log"
 fi
 python3 "$SCRIPT_DIR/manager.py" prepare --config "$config" >> "$runtime_log" 2>&1 || fail "Prefix configuration failed; see $runtime_log"
+printf 'Checking Windows .NET runtime (first launch may download/install it); diagnostics: %s\n' "$runtime_log"
+python3 "$SCRIPT_DIR/manager.py" ensure-runtime --config "$config" -- "${command_prefix[@]}" >> "$runtime_log" 2>&1 || fail "Windows .NET setup failed; see $runtime_log"
 printf 'Starting Wauncher; diagnostics: %s\n' "$runtime_log"
 # Our steam.exe stays alive until Wauncher exits. Proton/reaper tracks all
 # descendants. No second Wine server is used.

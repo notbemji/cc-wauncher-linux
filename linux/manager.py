@@ -13,6 +13,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import dotnet_runtime
 
 LINUX_DIR = Path(__file__).resolve().parent
 
@@ -120,6 +121,9 @@ def load_config(filename):
     if not isinstance(data.get("gc", True), bool):
         raise ValueError("gc must be true or false")
     data.setdefault("gc", True)
+    if not isinstance(data.get("install_dotnet", True), bool):
+        raise ValueError("install_dotnet must be true or false")
+    data.setdefault("install_dotnet", True)
     validate_game(data["game_dir"])
     validate_bootstrap(data["bootstrap"])
     prefix = data["prefix"]
@@ -163,15 +167,20 @@ def setup(args):
         subprocess.run(["bash", str(LINUX_DIR / "scripts/build-bootstrap.sh"), str(bootstrap)], check=True)
         validate_bootstrap(bootstrap)
     data = dict(version=1, game_dir=str(game), prefix=str(prefix), steam_root=str(steam),
-                bootstrap=str(bootstrap), log_dir=str(logs), gc=not args.no_gc)
+                bootstrap=str(bootstrap), log_dir=str(logs), gc=not args.no_gc,
+                install_dotnet=not args.skip_dotnet)
     if config.exists():
         shutil.copy2(config, str(config) + ".bak")
     atomic_write(config, json.dumps(data, indent=2) + "\n")
-    print(f"Configuration: {config}\nPrefix: {prefix}\n")
+    print(f"Configuration: {config}\nPrefix: {prefix}\nLogs: {logs}\n")
     print("In Steam → Counter-Strike 2 → Properties:")
     print("1. Compatibility: force Proton Experimental (or a tested compatible version).")
     print("2. General → Launch Options: paste this entire line:\n")
     print(launch_option(config))
+    if data["install_dotnet"]:
+        print("\nFirst Steam launch will download and install Windows .NET 8 Desktop Runtime if missing (approximately 60 MB).")
+    else:
+        print("\nAutomatic .NET installation disabled; use a self-contained Wauncher or provide its Windows runtime yourself.")
     print("\nStart using Counter-Strike 2's Play button. Steam configuration was not changed.")
 
 
@@ -236,6 +245,13 @@ def doctor(args):
         print(f"{key}: {data[key]}")
     prefix = data["prefix"]
     print(f"Prefix initialized: {(prefix / 'pfx/system.reg').is_file()}")
+    versions = dotnet_runtime.runtime_versions(prefix)
+    if versions:
+        print(f"Windows .NET 8 Desktop Runtime x64: installed ({', '.join(versions)})")
+    elif data["install_dotnet"]:
+        print("Windows .NET 8 Desktop Runtime x64: missing; will install automatically on Steam Play")
+    else:
+        print("Windows .NET 8 Desktop Runtime x64: missing; automatic installation disabled (self-contained Wauncher required)")
     print("Steam-session authentication and GPU/driver support require an actual launch and server test.")
     if "com.valvesoftware.Steam" in str(data["steam_root"]) or os.environ.get("FLATPAK_ID"):
         print("Flatpak detected: wrapper, Python, compiler (during setup), game, prefix and logs must be accessible inside Steam's sandbox; see README.")
@@ -253,10 +269,13 @@ def main():
     setup_parser.add_argument("--bootstrap", help="use an already built steam.exe from this repository")
     setup_parser.add_argument("--log-dir")
     setup_parser.add_argument("--no-gc", action="store_true", help="diagnostic only: disable the ClassicCounter coordinator")
+    setup_parser.add_argument("--skip-dotnet", action="store_true", help="skip automatic runtime installation for self-contained Wauncher builds")
     setup_parser.add_argument("--force", action="store_true", help="replace config, preserving config.json.bak")
-    for name in ("doctor", "resolve", "prepare"):
-        child = sub.add_parser(name, help={"doctor": "check local prerequisites and show launch options", "resolve": "internal: read config without shell evaluation", "prepare": "internal: enable GC after Proton initialization"}[name])
+    for name in ("doctor", "resolve", "prepare", "ensure-runtime"):
+        child = sub.add_parser(name, help={"doctor": "check local prerequisites and show launch options", "resolve": "internal: read config without shell evaluation", "prepare": "internal: enable GC after Proton initialization", "ensure-runtime": "internal: install missing .NET through Steam's Proton command"}[name])
         child.add_argument("--config", default=os.environ.get("WAUNCHER_LINUX_CONFIG", str(default_config())))
+        if name == "ensure-runtime":
+            child.add_argument("command", nargs=argparse.REMAINDER)
     setup_parser.add_argument("--config", default=os.environ.get("WAUNCHER_LINUX_CONFIG", str(default_config())))
     args = parser.parse_args()
     if args.action == "setup":
@@ -265,6 +284,9 @@ def main():
         return doctor(args)
     elif args.action == "prepare":
         prepare(load_config(args.config))
+    elif args.action == "ensure-runtime":
+        command = args.command[1:] if args.command[:1] == ["--"] else args.command
+        dotnet_runtime.ensure_runtime(load_config(args.config), command)
     elif args.action == "resolve":
         data = load_config(args.config)
         for key in ("game_dir", "prefix", "steam_root", "bootstrap", "log_dir", "gc"):

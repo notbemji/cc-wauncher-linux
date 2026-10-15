@@ -10,6 +10,7 @@ This repository is the main fork. Upstream Wauncher source and history stay in p
 linux/
   wauncher-linux              Steam entry point; setup and doctor commands
   manager.py                 JSON configuration, discovery, prefix settings
+  dotnet_runtime.py          Verified first-launch Windows runtime installation
   native/steam-bootstrap.c   Windows process-name bootstrap, built from source
   scripts/build-bootstrap.sh
   scripts/publish-wauncher.sh
@@ -35,7 +36,7 @@ Typical source-build dependencies (install Steam and graphics drivers through yo
 
 Package names describe prerequisites, not confirmed gameplay support. The setup script does not invoke a package manager or require root.
 
-Wauncher also needs its Windows .NET runtime. Prefer the self-contained Windows build from this fork's Linux workflow, or publish one using the script below. A framework-dependent upstream build requires the corresponding Windows .NET Desktop Runtime inside the same Proton prefix; installing Linux .NET does not satisfy that requirement.
+Wauncher also needs its Windows .NET runtime. On first launch, the wrapper automatically installs Windows .NET 8 Desktop Runtime x64 into the configured Proton prefix if it is missing. This needs internet (about 60 MB) and may take several minutes. A self-contained Windows build from this fork's workflow can use `setup --skip-dotnet` to skip that dependency installation. Installing Linux .NET does not satisfy a framework-dependent Windows Wauncher build.
 
 ## Quick start
 
@@ -51,12 +52,36 @@ In Steam → **Counter-Strike 2 → Properties**:
 
 1. In **Compatibility**, force **Proton Experimental**.
 2. In **General → Launch Options**, paste the entire line printed by setup. It ends in `-- %command%`.
-3. Press **Play** on Counter-Strike 2. If shader processing appears, it can be skipped for this alternate game executable.
+3. Press **Play** on Counter-Strike 2. If shader processing appears, it can be skipped for this alternate game executable. On a fresh prefix, wait for the automatic .NET installation before Wauncher appears; progress is recorded in the printed log directory.
 4. Wauncher opens; select a server and launch. The wrapper enables **Enable In-Game Inventory (Beta)** / `EnableGc=true`, so the game starts through `cc.exe`.
 
 The Counter-Strike 2 Play button now starts Wauncher while these launch options are installed. Clear that launch option and restore your previous Compatibility setting to play regular CS2 again. Do not use Wauncher's **Add to Steam** button for this workflow: a non-Steam shortcut does not establish the required AppID 730 session.
 
 Keep this checkout at the same location. If you move it, run setup again with `--force` and replace the Steam launch-options line.
+
+## Automatic Windows .NET setup
+
+The first Steam launch initializes the selected prefix, then checks for matching .NET 8 Core, Desktop and host components. If they are absent, it reads [Microsoft's .NET 8 release metadata](https://builds.dotnet.microsoft.com/dotnet/release-metadata/8.0/releases.json), selects the current stable Windows Desktop Runtime **win-x64 EXE**, downloads it over HTTPS from a Microsoft host, and verifies its published SHA-512 checksum before executing it.
+
+The installer runs with `/install /quiet /norestart`, through the **exact Proton/runtime command supplied by Steam**, in the **configured prefix**. It never falls back to system Wine or `~/.wine`. These are Microsoft's documented [unattended installer switches](https://learn.microsoft.com/en-us/dotnet/core/install/windows#command-line-options). The wrapper verifies the runtime files after installation; an exit code alone is not enough to declare success. It starts Wauncher only after that verification passes.
+
+Subsequent launches check local files and skip both the network request and installer when a compatible .NET 8 runtime is already present. This is dependency setup, not a runtime auto-updater: it does not upgrade existing .NET 8 patches on every launch. Linux/system packages and other Wine prefixes are unaffected.
+
+Downloaded installers and release metadata are cached under `<prefix>/.wauncher-runtime-cache/`. A retry can reuse the installer only after verifying its checksum again. A complete cache also permits retrying offline; a fresh installation without that cache needs internet.
+
+If installation fails, inspect:
+
+- `<log_dir>/runtime.log` — progress and the actionable failure message.
+- `<log_dir>/dotnet-installer.log` — Proton/installer process output.
+- `<prefix>/pfx/drive_c/wauncher-dotnet-install.log` — Microsoft's installation result, with adjacent MSI component logs.
+
+Resolve the reported issue and press Steam **Play** again. The wrapper preserves the prefix and will retry the missing dependency. For a self-contained Wauncher, use:
+
+```bash
+./linux/wauncher-linux setup --game-dir "/path/to/ClassicCounter" --skip-dotnet
+```
+
+In an existing JSON config, `"install_dotnet": false` disables automatic installation without changing other paths. Configurations created before this option existed default to automatic installation, so existing users do not need to repeat setup. `doctor` reports installed .NET versions, pending automatic installation, or the explicit opt-out.
 
 ## Existing prefix or custom locations
 
@@ -89,7 +114,7 @@ Steam creates the real AppID 730 compatibility session. The wrapper preserves St
 
 Proton normally replaces executables named `steam.exe` with its own builtin. The wrapper adds `*steam.exe=n` to Wine's DLL overrides so an external, explicit-path `steam.exe` loads natively. Proton's exact builtin override still wins for its system-directory Steam helper, preserving the Steam bridge. Other overrides are retained. This follows [Wine's module load-order rules](https://github.com/ValveSoftware/wine/blob/bleeding-edge/dlls/ntdll/unix/loadorder.c) and is verified by an isolated Proton runtime test. The bootstrap only imports Windows kernel APIs.
 
-The wrapper uses a single launch chain and normalizes Proton's `waitforexitandrun` verb to `run` after taking its own per-prefix lock. This avoids waiting for a second background shim in the same prefix. Before the first launch, it initializes the prefix and enables the ClassicCounter coordinator. Game, prefix, helper, and log paths are added to `STEAM_COMPAT_MOUNTS` for the Steam Linux Runtime.
+The wrapper uses a single launch chain and normalizes Proton's `waitforexitandrun` verb to `run` after taking its own per-prefix lock. This avoids waiting for a second background shim in the same prefix. Before launching Wauncher, it initializes the prefix if needed, enables the ClassicCounter coordinator, and ensures the Windows .NET runtime is available. The prefix lock remains held across installation and game startup. Game, prefix, helper, and log paths are added to `STEAM_COMPAT_MOUNTS` for the Steam Linux Runtime.
 
 Paths with spaces, apostrophes and shell metacharacters are passed as arguments without `eval`. Colons and line breaks in paths are rejected because runtime mount lists use colon separators.
 
@@ -109,7 +134,7 @@ NixOS, immutable distributions, containers, Steam Deck and other Steam packaging
 ./linux/wauncher-linux doctor --config "/path/to/local-config.json"
 ```
 
-Doctor checks paths, host architecture, the PE bootstrap and basic utilities without starting Steam or writing a prefix. It cannot prove Steam login, GPU support, server authentication, or network access.
+Doctor checks paths, host architecture, the PE bootstrap, basic utilities and Windows .NET runtime files without starting Steam, downloading an installer or writing a prefix. It cannot prove Steam login, GPU support, server authentication, or network access.
 
 For one detailed Proton trace, add `--debug` before `-- %command%` in Steam's launch-options line (or set `WAUNCHER_PROTON_LOG=1`). Logs are `runtime.log` and, in debug mode, `steam-730.log` in the configured log directory. Runtime logs rotate at 10 MiB on the next launch; Proton's detailed trace is disabled by default and can grow quickly.
 
@@ -127,7 +152,7 @@ If Wauncher reports no local Steam process, confirm that you used this wrapper's
 
 This table records the tested configuration, not every machine using that distro. The initial CachyOS session connected to the EU ClassicCounter coordinator, synchronized 111 inventory items, and loaded `de_stmarc` on a custom server beyond the earlier disconnect window. Other distros remain unconfirmed. For a new entry, record distro/version, architecture, Steam packaging, Proton version, GPU/driver and an actual GC/server test.
 
-Portable implementation validation on that host: bootstrap built with Clang/LLD; isolated Wine and Steam Linux Runtime/Proton tests confirmed the native helper, working-directory handoff and child exit status; all 14 wrapper regression tests passed; setup/doctor resolved the existing game and Proton prefix. A live Steam gameplay run of the portable entry point remains to be recorded; the original successful session used the earlier machine-specific script.
+Portable implementation validation on that host: bootstrap built with Clang/LLD; isolated Wine and Steam Linux Runtime/Proton tests confirmed the native helper, working-directory handoff and child exit status; all 31 wrapper/runtime regression tests passed; setup/doctor resolved the existing game and Proton prefix. The portable launcher also started successfully after Windows .NET 8.0.32 was installed in its fresh prefix. A live server-gameplay run of the portable entry point remains to be recorded; the original successful server session used the earlier machine-specific script.
 
 ## Development and building
 
@@ -147,7 +172,7 @@ shellcheck linux/wauncher-linux linux/scripts/*.sh
 
 Publish into an empty directory and copy the **entire published output** beside the existing game executables after closing Wauncher. The Linux workflow builds both toolchains, runs checks, and uploads a wrapper archive plus a self-contained Windows Wauncher artifact. Workflow artifacts are not automatically published releases and do not include ClassicCounter game assets.
 
-Tests cover quoting, fresh/existing prefixes, preserved settings, prefix locking, exit status, XDG paths, malformed commands, and rejection of mismatched Steam sessions. They do not replace real Steam gameplay tests. Building Wauncher requires NuGet access; running the already built wrapper does not require the .NET SDK on Linux.
+Tests cover quoting, fresh/existing prefixes, preserved settings, prefix locking, exit status, XDG paths, malformed commands, mismatched Steam sessions, runtime detection, Microsoft metadata selection, checksum failures, download-host restrictions, offline retries, installer failures and idempotence. They do not replace real Steam gameplay tests. Building Wauncher requires NuGet access; running the already built wrapper does not require the .NET SDK on Linux.
 
 To merge upstream source updates:
 

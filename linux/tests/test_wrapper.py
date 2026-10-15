@@ -7,10 +7,12 @@ import os
 from pathlib import Path
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 
 LINUX_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(LINUX_DIR))
 WRAPPER = LINUX_DIR / "wauncher-linux"
 spec = importlib.util.spec_from_file_location("manager", LINUX_DIR / "manager.py")
 manager = importlib.util.module_from_spec(spec)
@@ -43,7 +45,7 @@ class WrapperTests(unittest.TestCase):
         self.config = self.root / "config with spaces.json"
         self.data = dict(version=1, game_dir=str(self.game), prefix=str(self.prefix),
                          bootstrap=str(self.bootstrap), steam_root=str(self.steam),
-                         log_dir=str(self.log_dir), gc=True)
+                         log_dir=str(self.log_dir), gc=True, install_dotnet=False)
         self.config.write_text(json.dumps(self.data))
         self.trace = self.root / "trace.jsonl"
         self.proton = self.root / "Proton with spaces/proton"
@@ -209,6 +211,20 @@ exec "$@"
         from unittest.mock import patch
         with patch.dict(os.environ, {"XDG_DATA_HOME": ""}):
             self.assertEqual(manager.xdg("XDG_DATA_HOME", self.root), self.root)
+
+    def test_launch_with_installed_runtime_skips_installer(self):
+        from test_dotnet_runtime import make_runtime
+        (self.prefix / "pfx/system.reg").parent.mkdir(parents=True)
+        (self.prefix / "pfx/system.reg").touch()
+        (self.prefix / "pfx/drive_c/windows").mkdir(parents=True)
+        (self.prefix / "pfx/drive_c/users/steamuser").mkdir(parents=True)
+        make_runtime(self.prefix)
+        self.data["install_dotnet"] = True
+        self.config.write_text(json.dumps(self.data))
+        result = self.run_wrapper()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.trace.read_text().splitlines()), 1)
+        self.assertIn("skipping download/installer", (self.log_dir / "runtime.log").read_text())
 
 
 if __name__ == "__main__":
